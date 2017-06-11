@@ -229,13 +229,14 @@ class Service:
 class StopTime:
     keys = 'trip_id,arrival_time,departure_time,stop_id,stop_sequence,pickup_type,drop_off_type'.split(',')
 
-    def __init__(self, arrival_time, departure_time, stop_id, stop_sequence, pickup_type, drop_off_type):
+    def __init__(self, arrival_time, departure_time, stop_id, stop_sequence, pickup_type, drop_off_type, shape_dist_traveled):
         self.drop_off_type = drop_off_type
         self.pickup_type = pickup_type
         self.stop_sequence = stop_sequence
         self.stop_id = stop_id
         self.departure_time = departure_time
         self.arrival_time = arrival_time
+        self.shape_dist_traveled = shape_dist_traveled
 
     @classmethod
     def from_csv(cls, csv_record):
@@ -251,7 +252,8 @@ class StopTime:
         stop_sequence = int(csv_record['stop_sequence'])
         pickup_type = csv_record['pickup_type']
         drop_off_type = csv_record['drop_off_type']
-        return cls(arrival_time, departure_time, stop_id, stop_sequence, pickup_type, drop_off_type)
+        shape_dist_traveled = csv_record['shape_dist_traveled']
+        return cls(arrival_time, departure_time, stop_id, stop_sequence, pickup_type, drop_off_type, shape_dist_traveled)
 
     @classmethod
     def from_line(cls, line):

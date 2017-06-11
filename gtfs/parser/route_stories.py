@@ -61,16 +61,15 @@ import csv
 import os
 import sys
 from collections import defaultdict, namedtuple
-from configparser import ConfigParser
+import argparse
+# from configparser import ConfigParser
 
 from gtfs.parser.gtfs_reader import StopTime
 import logging
+import mmh3
 
-try:
-    import psycopg2
-    import psycopg2.extras
-except ImportError as e:
-    print("Failed to import psycopg2, db functionality will fail")
+import psycopg2
+import psycopg2.extras
 
 
 def parse_config(config_file_name):
@@ -95,13 +94,15 @@ def format_time(seconds_from_midnight):
 
 
 class RouteStoryStop:
-    def __init__(self, arrival_offset, departure_offset, stop_id, stop_sequence, pickup_type, drop_off_type):
+    def __init__(self, arrival_offset, departure_offset, stop_id, stop_sequence, drop_off_only,
+                 pickup_only, shape_dist_traveled):
         self.arrival_offset = arrival_offset
         self.departure_offset = departure_offset
         self.stop_id = stop_id
-        self.pickup_type = pickup_type
-        self.drop_off_type = drop_off_type
         self.stop_sequence = stop_sequence
+        self.drop_off_only = drop_off_only
+        self.pickup_only = pickup_only
+        self.shape_dist_traveled = shape_dist_traveled
 
     def __hash__(self):
         return hash(self.as_tuple())
@@ -110,7 +111,7 @@ class RouteStoryStop:
         return self.as_tuple() == other.as_tuple()
 
     def as_tuple(self):
-        return self.arrival_offset, self.departure_offset, self.stop_id, self.pickup_type, self.drop_off_type
+        return self.arrival_offset, self.departure_offset, self.stop_id, self.drop_off_only, self.pickup_only
 
     def __str__(self):
         return 'stop_id=%s,stop_sequence=%s' % (self.stop_id, self.stop_sequence)
@@ -121,7 +122,8 @@ class RouteStoryStop:
     @classmethod
     def from_csv(cls, csv_record):
         route_story_id = int(csv_record['route_story_id'])
-        field_names = "arrival_offset,departure_offset,stop_id,stop_sequence,pickup_type,drop_off_type".split(',')
+        field_names = ['arrival_offset', 'departure_offset', 'stop_id', 'stop_sequence', 'pickup_type',
+                       'drop_off_type', 'shape_dist_traveled']
         fields = [csv_record[field] for field in field_names]
         fields = [int(field) if field != '' else 0 for field in fields]
         return route_story_id, cls(*fields)
@@ -131,12 +133,35 @@ class RouteStory:
     def __init__(self, route_story_id, stops):
         self.route_story_id = route_story_id
         self.stops = stops
+        self.as_string = "-".join("%s-%s" % (stop.stop_id, stop.arrival_offset) for stop in self.stops)
+        self.key = mmh3.hash64(self.as_string)[0]
 
-    def __eq__(self, other):
-        return self.route_story_id == other.route_story_id
 
-    def __hash__(self):
-        return hash(self.route_story_id)
+class RouteStorySummary:
+    def __init__(self, route_story_id, as_string, key):
+        self.route_story_id = route_story_id
+        self.as_string = as_string
+        self.key = key
+
+
+class RouteStoryFinder:
+    def __init__(self):
+        self.data = defaultdict(list)
+        self.size = 0
+
+    def add(self, route_story):
+        self.data[route_story.key].append(route_story)
+        self.size += 1
+
+    def find(self, route_story):
+        for other in self.data[route_story.key]:
+            if route_story.as_string == other.as_string:
+                return other.route_story_id
+
+    def __iter__(self):
+        for l in self.data.values():
+            for rs in l:
+                yield rs
 
 
 TripRouteStory = namedtuple('TripRouteStory', 'start_time route_story')
@@ -158,10 +183,17 @@ def stop_times_file_generator(stop_times_file):
         return (line_to_trip_and_stop_time(line) for line in lines)
 
 
-def stop_times_db_generator(config):
+def connect_to_db(config):
+    template = "dbname={d[db_name]} user={d[db_user]} host={d[db_host]} password={d[db_password]}"
+    connection_str = template.format(d=config)
+    logging.debug("Connection to db")
+    return psycopg2.connect(connection_str)
+
+
+def stop_times_db_generator(connection, db_table='gtfs_stop_times'):
     def total_records():
         c = connection.cursor()
-        c.execute("SELECT COUNT(*) FROM stop_times;")
+        c.execute("SELECT COUNT(*) FROM %s;" % db_table)
         return c.fetchone()[0]
 
     def progress(iterable):
@@ -171,24 +203,21 @@ def stop_times_db_generator(config):
             yield value
 
     """Yields a sequence of (trip_id, StopTime) tuples read from db"""
-    template = "dbname={d[db_name]} user={d[db_user]} host={d[db_host]} password={d[db_password]}"
-    connection_str = template.format(d=config)
-    logging.debug("Connection to db")
-    connection = psycopg2.connect(connection_str)
     logging.debug("Fetching total number of records")
     total_records = total_records()
     logging.debug("There are %d records in stop_times table" % total_records)
     logging.debug("Creating cursor")
-    cursor = connection.cursor('read_stop_times_from_db', cursor_factory=psycopg2.extras.DictCursor)
+    cursor = connection.cursor('read_stop_times_from_db', cursor_factory=psycopg2.extras.NamedTupleCursor)
     logging.debug("Executing select query")
-    cursor.execute("SELECT trip_id,arrival_time,departure_time,stop_id,stop_sequence,drop_off_only,pickup_only" +
-                   " FROM gtfs_stop_times ORDER BY trip_id, stop_sequence;")
+    cursor.execute("SELECT trip_id,arrival_time,departure_time,stop_id,stop_sequence,drop_off_only,"
+                   "pickup_only,shape_dist_traveled" +
+                   " FROM %s ORDER BY trip_id, stop_sequence;" % db_table)
     logging.debug("Starting iteration")
-    for row in progress(cursor):
-        yield row[0], StopTime(parse_timestamp(row[1]), parse_timestamp(row[2]), row[3], row[4], row[5], row[6])
+    for r in progress(cursor):
+        yield r.trip_id, StopTime(parse_timestamp(r.arrival_time),
+                                  parse_timestamp(r.departure_time), r.stop_id, r.stop_sequence,
+                                  r.drop_off_only, r.pickup_only, r.shape_dist_traveled)
     logging.debug("Done iteration. Closing db connection.")
-    connection.close()
-    logging.debug("DB connection closed.")
 
 
 def group_by_trip_id(sequence):
@@ -225,51 +254,53 @@ def build_route_stories(trip_and_stop_times):
     """ Builds route stories. Returns a dictionary from id to RouteStory object, and a dictionary
     from trip to a tuple, (route_story_id, start_time)"""
     logging.info("Building route stories")
-    route_story_to_id = {}  # Dict[int, RouteStory]
+    route_story_finder = RouteStoryFinder()
     trip_to_route_story = {}  # Dict[int, Tuple[int, datetime]]
     for trip_id, stop_times in trip_and_stop_times:
         # get the start time in seconds since the start of the day
         start_time = stop_times[0].arrival_time
-        # convert the StopTime object to RouteStoryStop object; use a tuple because it's hashable
-        route_story_tuple = tuple(RouteStoryStop(stop_time.arrival_time - start_time,
-                                                 stop_time.departure_time - start_time,
-                                                 stop_time.stop_id,
-                                                 stop_time.stop_sequence,
-                                                 stop_time.pickup_type,
-                                                 stop_time.drop_off_type) for stop_time in stop_times)
+        route_story = RouteStory(route_story_id=-1,
+                                 stops=[RouteStoryStop(stop_time.arrival_time - start_time,
+                                                       stop_time.departure_time - start_time,
+                                                       stop_time.stop_id,
+                                                       stop_time.stop_sequence,
+                                                       stop_time.pickup_type,
+                                                       stop_time.drop_off_type,
+                                                       stop_time.shape_dist_traveled) for stop_time in stop_times])
         # is it a new route story? if yes, allocate an id
-        if route_story_tuple not in route_story_to_id:
-            route_story_id = len(route_story_to_id) + 1
-            route_story_to_id[route_story_tuple] = route_story_id
-        trip_to_route_story[trip_id] = (route_story_to_id[route_story_tuple], start_time)
+        route_story_id = route_story_finder.find(route_story)
+        if not route_story_id:
+            route_story.route_story_id = route_story_id = route_story_finder.size + 1
+            route_story_finder.add(route_story)
+        trip_to_route_story[trip_id] = (route_story_id, start_time)
 
-    route_stories = {route_story_id: RouteStory(route_story_id, route_story_tuple)
-                     for route_story_tuple, route_story_id in route_story_to_id.items()}
-    logging.info("%d route stories built" % len(route_stories))
-    return route_stories, trip_to_route_story
+    logging.info("%d route stories built" % len(route_story_finder.data))
+    return route_story_finder, trip_to_route_story
 
 
-def export_route_stories_to_csv(output_file, route_stories):
+def export_route_story_stops_to_csv(output_file, route_stories):
     logging.info("Exporting route story stops")
     with open(output_file, 'w') as f:
-        f.write("route_story_id,arrival_offset,departure_offset,stop_id,stop_sequence,pickup_type,drop_off_type\n")
-        for route_story_id, route_story in route_stories.items():
+        f.write(
+            "route_story_id,arrival_offset,departure_offset,stop_id,stop_sequence,pickup_type,drop_off_type,shape_dist_taveled\n")
+        for route_story in route_stories:
             for i, stop in enumerate(route_story.stops):
-                values = [route_story_id,
+                values = [route_story.route_story_id,
                           stop.arrival_offset,
                           stop.departure_offset,
                           stop.stop_id,
                           i + 1,
-                          stop.pickup_type,
-                          stop.drop_off_type]
+                          stop.drop_off_only,
+                          stop.pickup_only,
+                          stop.shape_dist_traveled]
                 f.write(','.join(str(x) if x is not None else '' for x in values) + '\n')
-    logging.info("Route story export done")
+    logging.info("Route story stops export done")
 
 
 def export_trip_route_stories_to_csv(output_file, trip_to_route_story):
     logging.info("exporting %d full trips" % len(trip_to_route_story))
     with open(output_file, 'w') as f2:
-        fields = ["trip_id", "start_time", "route_story"]
+        fields = ["trip_id", "route_story", "start_time"]
         writer = csv.DictWriter(f2, fieldnames=fields, lineterminator='\n')
         writer.writeheader()
         for trip_id, (route_story_id, start_time) in trip_to_route_story.items():
@@ -277,6 +308,15 @@ def export_trip_route_stories_to_csv(output_file, trip_to_route_story):
                              "start_time": format_time(start_time),
                              "route_story": route_story_id})
     logging.info("Trips export done.")
+
+
+def export_route_story_summaries_to_csv(output_file, route_stories):
+    logging.info("Exporting route story summaries")
+    with open(output_file, 'w', encoding='utf8') as f:
+        f.write('route_story_id,rs_hash,rs_string\n')
+        for route_story in route_stories:
+            f.write("%s,%s,%s\n" % (route_story.route_story_id, route_story.key, route_story.as_string))
+    logging.info("Route story summaries export done")
 
 
 def load_route_stories_from_csv(route_stories_file, trip_to_route_story_file):
@@ -305,26 +345,63 @@ def load_route_stories_from_csv(route_stories_file, trip_to_route_story_file):
     return route_stories, trip_to_route_story
 
 
+# def main():
+#     logging.basicConfig(level=logging.DEBUG,
+#                         format='%(asctime)s %(message)s',
+#                         handlers=[logging.StreamHandler(sys.stdout)])
+#     config = parse_config(sys.argv[1])
+#     connection = None
+#     if config["source"] == "file":
+#         logging.info("Loading data from file", config["source"])
+#         source_file_name = config["source_file_name"]
+#         source_data = stop_times_file_generator(source_file_name)
+#     elif config["source"] == "db":
+#         logging.info("Loading data from db")
+#         connection = connect_to_db(config)
+#         source_data = stop_times_db_generator(connection, db_table=config["db_table"])
+#     else:
+#         raise Exception("Unknown source type %s" % config["source"])
+#
+#     stories, trips = build_route_stories(group_by_trip_id(source_data))
+#
+#     if connection:
+#         connection.close()
+#
+#     output_folder = config["output_folder"]
+#     export_route_story_stops_to_csv(os.path.join(output_folder, 'route_story_stops.txt'), stories)
+#     export_trip_route_stories_to_csv(os.path.join(output_folder, 'trip_route_stories.txt'), trips)
+#     export_route_story_summaries_to_csv(os.path.join(output_folder, 'route_story_summaries.txt'), stories)
+
+
 def main():
     logging.basicConfig(level=logging.DEBUG,
                         format='%(asctime)s %(message)s',
                         handlers=[logging.StreamHandler(sys.stdout)])
-    config = parse_config(sys.argv[1])
-    if config["source"] == "file":
-        logging.info("Loading data from file", config["source"])
-        source_file_name = config["source_file_name"]
-        source_data = stop_times_file_generator(source_file_name)
-    elif config["source"] == "db":
-        logging.info("Loading data from db")
-        source_data = stop_times_db_generator(config)
-    else:
-        raise Exception("Unknown source type %s" % config["source"])
 
-    stories, trips = build_route_stories(group_by_trip_id(source_data))
+    parser = argparse.ArgumentParser(description='Create route stories.')
+    parser.add_argument('--db_table', help='table to read stop_times from')
+    parser.add_argument('--db_name', help='database to read from (default: obus)', default='obus')
+    parser.add_argument('--db_user', help='database user name (default: obus)', default='obus')
+    parser.add_argument('--db_host', help='database host (default: localhost)', default='localhost')
+    parser.add_argument('--db_password', help='database password')
+    parser.add_argument('--output_folder', help='where to write the result files')
 
-    output_folder = config["output_folder"]
-    export_route_stories_to_csv(os.path.join(output_folder, 'route_stories.txt'), stories)
-    export_trip_route_stories_to_csv(os.path.join(output_folder, 'trip_to_stories.txt'), trips)
+    args = parser.parse_args()
+    config = {
+        'db_name': args.db_name,
+        'db_user': args.db_user,
+        'db_host': args.db_host,
+        'db_password': args.db_password
+    }
+
+    with connect_to_db(config) as connection:
+        source_data = stop_times_db_generator(connection, db_table=args.db_table)
+        stories, trips = build_route_stories(group_by_trip_id(source_data))
+
+    output_folder = args.output_folder
+    export_route_story_stops_to_csv(os.path.join(output_folder, 'route_story_stops.txt'), stories)
+    export_trip_route_stories_to_csv(os.path.join(output_folder, 'trip_route_stories.txt'), trips)
+    export_route_story_summaries_to_csv(os.path.join(output_folder, 'route_story_summaries.txt'), stories)
 
 
 if __name__ == '__main__':
