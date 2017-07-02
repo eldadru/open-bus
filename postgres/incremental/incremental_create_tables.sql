@@ -35,7 +35,7 @@ CREATE TABLE IF NOT EXISTS igtfs_routes
 
 CREATE INDEX IF NOT EXISTS igtfs_routes_core_fields
   ON igtfs_routes
-  (orig_id, agency_id, short_name, route_desc);
+  (agency_id, label, code, direction, alternative);
 
 
 CREATE TABLE IF NOT EXISTS igtfs_stops
