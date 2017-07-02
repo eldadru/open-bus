@@ -1,3 +1,6 @@
+\set ON_ERROR_STOP on
+\timing
+
 \echo Inserting to igtfs_files
 INSERT INTO igtfs_files (file_date, file_size, imported_on)
 VALUES(:'gtfs_date', :file_size, current_timestamp);

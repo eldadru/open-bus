@@ -1,5 +1,5 @@
 \timing
-
+\set ON_ERROR_STOP on
 
 --- Create all the temporary tables and load the data from the files into them
 -- this stage is very similar to loading a non-incremental GTFS except for the table names and loading route stories

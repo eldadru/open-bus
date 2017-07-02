@@ -1,3 +1,5 @@
+\set ON_ERROR_STOP on
+
 CREATE TABLE IF NOT EXISTS igtfs_files
 (
   file_date         DATE      NOT NULL, -- earliest start_date in calendar file

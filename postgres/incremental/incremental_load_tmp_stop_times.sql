@@ -1,4 +1,5 @@
 \timing
+\set ON_ERROR_STOP on
 
 \echo ****** Loading stop times tmp *********
 
