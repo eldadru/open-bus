@@ -83,20 +83,21 @@ class CrudPostgresql(Crud):
             data = [ Record(*i) for i in data]
             return data
 
-    def write_arrivals(self, real_times):
+    def write_arrivals(self, arrivals):
         sql = """INSERT INTO public.siri_real_time_arrivals(
-                    route_id, trip_id, arrival_time, stop_id, meters_between_records, 
+                    route_id, trip_id, arrival_time, stop_id,expected_arrival_time, meters_between_records, 
                     seconds_between_records)
-            VALUES (%s,%s,%s,%s,%s,%s)
+            VALUES (%s,%s,%s,%s,%s,%s,%s)
             ON CONFLICT ON CONSTRAINT "PK" DO NOTHING;"""
         with self.conn.cursor() as curs:
-            data = [(i.stop.route_id,
-                     i.stop.trip_id,
-                     i.real_time,
-                     i.stop.stop_id,
-                     i.records[1].route_offset_in_meters - i.records[0].route_offset_in_meters,
-                     (i.records[1].recorded_at_time - i.records[0].recorded_at_time).total_seconds())
-                    for i in real_times]
+            data = [(arrival.stop.route_id,
+                     arrival.stop.trip_id,
+                     arrival.real_time,
+                     arrival.stop.stop_id,
+                     arrival.stop.arrival_time,
+                     arrival.records[1].route_offset_in_meters - arrival.records[0].route_offset_in_meters,
+                     (arrival.records[1].recorded_at_time - arrival.records[0].recorded_at_time).total_seconds())
+                    for arrival in arrivals]
 
             curs.executemany(sql, data)
             self.conn.commit()

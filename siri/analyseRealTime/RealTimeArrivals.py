@@ -122,13 +122,13 @@ class Trip:
         for stop in self.stops:
             try:
                 b, a = self._get_before_and_after_records(stop)
-                self.real_times.append(RealTime(b, a, stop))
+                self.real_times.append(RealTimeArrival(b, a, stop))
             except ValueError as e:
                 self.stops_with_no_realtime.append({'stop':stop,'comment':e})
 
 
 
-class RealTime:
+class RealTimeArrival:
     def __init__(self, before, after, stop):
         self.records = (before, after)
         self.stop = stop

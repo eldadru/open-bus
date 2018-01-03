@@ -1,6 +1,7 @@
 import argparse
 import collections
 import configparser
+import os
 
 
 
@@ -47,6 +48,8 @@ def get_args_from_cli(input):
 
 def wrapper(cli_input):
     args = get_args_from_cli(cli_input)
+    if not os.path.exists(args.config_file):
+        raise OSError("cant find configuration file")
     c = get_connection_parameters(args.config_file)
     d = args.date_for_query
     return dict(connection=c, date=d)
