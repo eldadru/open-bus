@@ -1,15 +1,11 @@
 package org.hasadna.bus.service;
 
+import static org.hasadna.bus.util.DateTimeUtils.DEFAULT_CLOCK;
+import static org.hasadna.bus.util.DateTimeUtils.subtractMinutesStopAtMidnight;
+import static org.hasadna.bus.util.DateTimeUtils.toDateTime;
+
 import io.micrometer.core.instrument.Tags;
 import io.micrometer.datadog.DatadogMeterRegistry;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.stereotype.Component;
-import org.springframework.util.CollectionUtils;
-import static org.hasadna.bus.util.DateTimeUtils.*;
-
-import javax.annotation.PostConstruct;
 import java.time.DayOfWeek;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -18,10 +14,14 @@ import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Queue;
-import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.PriorityBlockingQueue;
-import java.util.function.Function;
 import java.util.stream.Collectors;
+import javax.annotation.PostConstruct;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Component;
+import org.springframework.util.CollectionUtils;
 
 @Component
 public class SortedQueue {

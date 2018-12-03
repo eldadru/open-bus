@@ -31,7 +31,7 @@ import java.util.stream.Stream;
 //@Profile({"production", "dev"})
 public class ReadMakatFileImpl implements ReadRoutesFile {
 
-    @Value("${gtfs.dir.location:/home/evyatar/logs/}")
+    @Value("${gtfs.dir.location:/home/evyatar5/logs/}")
     public String dirOfGtfsFiles ;
 
 

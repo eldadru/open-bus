@@ -18,10 +18,10 @@ public class DownloadController {
 
 
         byte[] reportBytes = null;
-        File result = new File("/home/evyatar/logs/archived/" + fileName);
+        File result = new File("/home/evyatar2/logs/archived/" + fileName);
 
         if (result.exists()) {
-            InputStream inputStream = new FileInputStream("/home/evyatar/logs/archived/" + fileName);
+            InputStream inputStream = new FileInputStream("/home/evyatar3/logs/archived/" + fileName);
             String type = result.toURL().openConnection().guessContentTypeFromName(fileName);
             response.setHeader("Content-Disposition", "attachment; filename=" + fileName);
             response.setHeader("Content-Type", type);
